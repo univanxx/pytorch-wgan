@@ -7,43 +7,107 @@ import time as t
 import matplotlib.pyplot as plt
 plt.switch_backend('agg')
 import os
-from utils.tensorboard_logger import Logger
+# from utils.tensorboard_logger import Logger
 from itertools import chain
 from torchvision import utils
 
 SAVE_PER_TIMES = 100
 
 class Generator(torch.nn.Module):
-    def __init__(self, channels):
+    def __init__(self):
         super().__init__()
         # Filters [1024, 512, 256]
         # Input_dim = 100
         # Output_dim = C (number of channels)
-        self.main_module = nn.Sequential(
-            # Z latent vector 100
-            nn.ConvTranspose2d(in_channels=100, out_channels=1024, kernel_size=4, stride=1, padding=0),
-            nn.BatchNorm2d(num_features=1024),
+        self.stage1 = nn.Sequential(
+            nn.Linear(100, 256),
             nn.ReLU(True),
-
-            # State (1024x4x4)
-            nn.ConvTranspose2d(in_channels=1024, out_channels=512, kernel_size=4, stride=2, padding=1),
-            nn.BatchNorm2d(num_features=512),
+            # 1 block
+            nn.Upsample(300),
+            nn.Conv1d(1, 256, 3, padding=1),
             nn.ReLU(True),
-
-            # State (512x8x8)
-            nn.ConvTranspose2d(in_channels=512, out_channels=256, kernel_size=4, stride=2, padding=1),
-            nn.BatchNorm2d(num_features=256),
+            # 2 block
+            nn.Upsample(400),
+            nn.Conv1d(256, 512, 3, padding=1),
             nn.ReLU(True),
+            # 3 block
+            nn.Upsample(600),
+            nn.Conv1d(512, 256, 3, padding=1),
+            nn.ReLU(True),
+            # 4 block
+            nn.Upsample(1200),
+            nn.Conv1d(256, 128, 3, padding=1),
+            nn.ReLU(True),
+            # 5 block
+            nn.Upsample(2500),
+            nn.Conv1d(128, 64, 3, padding=1),
+            nn.ReLU(True),
+            # 6 block
+            nn.Upsample(5000),
+            nn.Conv1d(64, 8, 3, padding=1),
+            nn.LeakyReLU(True)
+        )
+        self.stage2_1block = nn.Sequential(
+            # 1 block
+            nn.Conv1d(8, 64, 4, stride=2, padding=1),
+            nn.LeakyReLU(True)
+        )
+        self.stage2_2block = nn.Sequential(
+            # 2 block
+            nn.Conv1d(64, 128, 4, stride=2, padding=1),
+            nn.LeakyReLU(True)
+        )
+        
+        self.stage2_conv = nn.Sequential(
+            # 3 block
+            nn.Conv1d(128, 256, 4, stride=2, padding=1),
+            nn.LeakyReLU(True),
+            # 4 block
+            nn.Conv1d(256, 512, 4, stride=2, padding=1),
+            nn.LeakyReLU(True),
+            # 5 block
+            nn.Conv1d(512, 1024, 4, stride=2, padding=1),
+            nn.LeakyReLU(True)
+        )
 
-            # State (256x16x16)
-            nn.ConvTranspose2d(in_channels=256, out_channels=channels, kernel_size=4, stride=2, padding=1))
-            # output of main module --> Image (Cx32x32)
-
-        self.output = nn.Tanh()
+        self.stage2_deconv = nn.Sequential(
+            # 1 block
+            nn.Upsample(scale_factor=2),
+            nn.Conv1d(1024, 512, 3, padding=1),
+            nn.ReLU(True),
+            # 2 block
+            nn.Upsample(scale_factor=2),
+            nn.Conv1d(512, 256, 3, padding=1),
+            nn.ReLU(True),
+            # 3 block
+            nn.Upsample(scale_factor=2),
+            nn.Conv1d(256, 128, 1, padding=1),
+            nn.ReLU(True)
+        )
+        
+        self.stage2_4block = nn.Sequential(
+            # 4 block
+            nn.Upsample(scale_factor=2),
+            nn.Conv1d(128, 64, 3, padding=1),
+            nn.ReLU(True),
+        )
+        self.stage2_5block = nn.Sequential(
+            # 5 block
+            nn.Upsample(scale_factor=2),
+            nn.Conv1d(64, 8, 3, padding=1),
+            nn.ReLU(True)
+        )
 
     def forward(self, x):
-        x = self.main_module(x)
-        return self.output(x)
+        x_s1 = self.stage1(x)
+        x_s2_1 = self.stage2_1block(x_s1)
+        x_s2_2 = self.stage2_2block(x_s2_1)
+        x_s2 = self.stage2_conv(x_s2_2)
+        x_dec = self.stage2_deconv(x_s2) + x_s2_2
+        x_dec_1 = self.stage2_4block(x_dec)
+        x_dec_1 = x_dec_1 + x_s2_1
+        x_dec_2 = self.stage2_5block(x_dec_1)
+        return x_dec_2
 
 
 class Discriminator(torch.nn.Module):
